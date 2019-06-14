@@ -4,7 +4,7 @@ docker-okta-utils implements a container that handles authentication from Okta. 
 [3 Musketeers]: https://3musketeers.io/
 
 ## Important Information
-It is not possible to run `oktashell` with the `eval $(docker run -it)` method of setting environemnt variables. This is due to `docker run -it` not outputting on stderr causing all output to be captured by `eval`. To work around this `oktashell -p <profile>` has been added which will write the credentials to the specified profile in `~/.aws/credentials`. You need to bind mount your `.aws` directory from the host to `/root/.aws/` for this to work.
+It is not possible to run `oktashell` with the `eval $(docker run -it)` method of setting environment variables. This is due to `docker run -it` not outputting on stderr causing all output to be captured by `eval`. To work around this `oktashell -p <profile>` has been added which will write the credentials to the specified profile in `~/.aws/credentials`. You need to bind mount your `.aws` directory from the host to `/root/.aws/` for this to work.
 
 ## oktashell
 ### Configuration
@@ -39,7 +39,7 @@ optional arguments:
 ```
 
 ## AssumeRole
-AssumeRole uses the standard `~/.aws/config` file. You dont need to specify a source_profile on each profile as whats specified with `-s` is always used.
+AssumeRole uses the standard `~/.aws/config` file. You don't need to specify a source_profile on each profile as whats specified with `-s` is always used.
 
 ```
 [profile xyz-sandpit]
