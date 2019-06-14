@@ -1,12 +1,14 @@
 # docker-okta-utils
-docker-okta-utils implements a container that handles authentication from Okta. Because it updates your `~/.aws/credentials file`, it is flexible enough to allow use of other tools like Terraform and Kubectl. It also allows easy use of the 3 Musketeers pattern. All scripts in this container now require Python3 and no longer support Python2
+docker-okta-utils implements a container that handles authentication from Okta. Because it (non-destructively) updates your `~/.aws/credentials file`, it is flexible enough to allow use of other tools with their own Docker images like Terraform and kubectl. It also allows easy use of the [3 Musketeers][] pattern.
+
+[3 Musketeers]: https://3musketeers.io/
 
 ## Important Information
 It is not possible to run `oktashell` with the `eval $(docker run -it)` method of setting environemnt variables. This is due to `docker run -it` not outputting on stderr causing all output to be captured by `eval`. To work around this `oktashell -p <profile>` has been added which will write the credentials to the specified profile in `~/.aws/credentials`. You need to bind mount your `.aws` directory from the host to `/root/.aws/` for this to work.
 
 ## oktashell
 ### Configuration
-oktashell requires a configuration file at `~/.aws/oktashell.yml` containing information about your Okta apps.
+oktashell requires a configuration file at `~/.aws/oktashell.yml` containing information about your Okta apps:
 
 ```yml
 ---
