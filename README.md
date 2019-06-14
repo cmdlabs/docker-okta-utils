@@ -1,5 +1,7 @@
 # docker-okta-utils
-docker-okta-utils implements a container that handles authentication from Okta. Because it (non-destructively) updates your `~/.aws/credentials file`, it is flexible enough to allow use of other tools with their own Docker images like Terraform and kubectl. It also allows easy use of the [3 Musketeers][] pattern.
+![Docker Cloud Automated build](https://img.shields.io/docker/cloud/automated/cmdlabs/okta-utils.svg) ![Docker Cloud Build Status](https://img.shields.io/docker/cloud/build/cmdlabs/okta-utils.svg)
+
+docker-okta-utils implements a container that handles authentication from Okta to AWS. Because it (non-destructively) updates your `~/.aws/credentials file`, it is flexible enough to allow use of other tools with their own Docker images like Terraform and kubectl. It also allows easy use of the [3 Musketeers][] pattern.
 
 [3 Musketeers]: https://3musketeers.io/
 
