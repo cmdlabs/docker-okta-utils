@@ -1,0 +1,508 @@
+#!/usr/bin/env python3
+import base64
+from datetime import datetime
+import getpass
+import os
+import urllib.parse
+import sys
+from time import sleep
+from xml.etree import ElementTree
+from configparser import ConfigParser
+import yaml
+
+import boto3
+import botocore.exceptions
+from bs4 import BeautifulSoup
+import requests
+
+requests = requests.Session()
+
+class OktaAPIAuth(object):
+
+    def __init__(self, okta_server, username):
+        self.okta_url = None
+        self.username = username
+        self.userid = None
+        url_new = ('https', okta_server, '', '', '', '')
+        self.okta_url = urllib.parse.urlunparse(url_new)
+        self._last_passcode = None
+
+    @property
+    def password(self):
+        return getpass.getpass('Password: ')
+
+    @property
+    def passcode(self):
+        if self._last_passcode:
+            result = input('TOTP token [%s]: ' % self._last_passcode)
+            if result:
+                self._last_passcode = result
+        else:
+            self._last_passcode = input('TOTP token: ')
+        return self._last_passcode
+
+    def okta_req(self, path, data, method='post'):
+        url = '{base}/api/v1{path}'.format(base=self.okta_url, path=path)
+        resp = getattr(requests, method)(
+            url=url,
+            headers={
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+            },
+            json=data,
+        )
+        return resp.json()
+
+    def preauth(self, username, password):
+        path = '/authn'
+        data = {'username': username, 'password': password}
+        return self.okta_req(path, data)
+
+    def doauth(self, fid, state_token):
+        path = '/authn/factors/{fid}/verify'.format(fid=fid)
+        data = {'fid': fid,
+                'stateToken': state_token,
+                'passCode': self.passcode}
+        return self.okta_req(path, data)
+
+    def login(self, sessionToken):
+        requests.get(url=self.okta_url + "/login/sessionCookieRedirect?token=" +
+                     sessionToken + "&redirectUrl=/")
+
+    def auth(self):
+        username = self.username
+        password = self.password
+        status = False
+        invalid_username_or_password = username is None or username == '' or password is None or password == ''
+        if invalid_username_or_password:
+            print("Missing username or password for user: {} - Reported username may be 'None' due to this".format(username))
+            return False
+        else:
+            try:
+                rv = self.preauth(username, password)
+            except Exception as s:
+                raise RuntimeError('Error connecting to the Okta API: %s' % s)
+
+            if 'errorCauses' in rv:
+                msg = rv['errorSummary']
+                print('\033[91mUser authentication failed: %s\033[0m' % (msg,))
+                return False
+            if 'status' in rv:
+                status = rv['status']
+            if status == 'SUCCESS':
+                self.userid = rv['_embedded']['user']['id']
+                self.login(rv['sessionToken'])
+                return True
+            if not self.passcode:
+                print('No second factor found for username %s' % username)
+            if status == 'MFA_ENROLL' or status == 'MFA_ENROLL_ACTIVATE':
+                print('User %s needs to enroll first' % self.username)
+                return False
+            if status == 'MFA_REQUIRED' or status == 'MFA_CHALLENGE':
+                print('User %s password validates, checking second factor' %
+                      self.username)
+                res = None
+                for factor in rv['_embedded']['factors']:
+                    if factor['factorType'] != 'token:software:totp':
+                        continue
+                    fid = factor['id']
+                    state_token = rv['stateToken']
+                    try:
+                        res = self.doauth(fid, state_token)
+                    except Exception as s:
+                        print('Unexpected error with the Okta API: %s' % s)
+                        return False
+
+                    if 'status' in res and res['status'] == 'SUCCESS':
+                        print(
+                            'User %s is now authenticated with MFA via Okta API' % self.username)
+                        self.userid = rv['_embedded']['user']['id']
+                        self.login(res['sessionToken'])
+                        return True
+
+                if 'errorCauses' in res:
+                    msg = res['errorCauses'][0]['errorSummary']
+                    # TODO: Sleep and retry on certain failures
+                    # Invalid token provided: Retry
+                    # Invalid Passcode/Answer: Actually invalid
+                    print('User %s MFA token authentication failed: %s' %
+                          (self.username, msg))
+                return False
+            print('User %s is not allowed to authenticate: %s' %
+                  (self.username, status))
+            return False
+
+
+class OktaSamlAuth(OktaAPIAuth):
+
+    def __init__(self, okta_url, application_type, application_id, username, preferred_mfa, **kwargs):
+        self.application_type = application_type
+        self.application_id = application_id
+        self.preferred_mfa = preferred_mfa
+        OktaAPIAuth.__init__(self, okta_url, username)
+
+    def token_details(self):
+        path = "/api/v1/users/" + self.userid + "/factors"
+        url = '{base}{path}'.format(base=self.okta_url, path=path)
+        resp = requests.get(url=url, headers={
+                            'Accept': 'application/json', 'Content-Type': 'application/json'})
+        return [
+            {
+                key: value.replace('token:software:',
+                                   '') if key == 'factorType' else value
+                for key, value in factor.items()
+            }
+            for factor in resp.json()
+        ]
+
+    def saml(self):
+        url = '{base}/app/{app}/{appid}/sso/saml'.format(
+            base=self.okta_url, app=self.application_type, appid=self.application_id)
+        resp = requests.get(url=url)
+
+        if '/policy/second-factor' in resp.url:
+            state_token = None
+            for line in resp.text.split('\n'):
+                if 'var stateToken ' in line:
+                    state_token = line.split("'")[1]
+                    if not state_token:
+                        continue
+            if not state_token:
+                raise Exception(
+                    "Parsing state token from SAML document failed.")
+            if self._valid_state_token(state_token):
+                self._mfa_challenge(state_token)
+            else:
+                # TODO: This shouldn't be possible considering Okta *just* issued it.
+                print('Okta provided an invalid token; fetching a new one.')
+            return self.saml()
+
+        if resp.status_code == 403:
+            raise Exception(
+                "You don't have permission to access this Okta app, please check with your administrator.")
+        if resp.status_code != 200:
+            raise Exception(
+                'Received error code from server when loading SAML details: %s' % resp.status_code)
+
+        return resp.text
+
+    def _valid_state_token(self, state_token):
+        resp = self.okta_req('/authn', {'stateToken': state_token})
+        return 'errorCode' not in resp
+
+    def _mfa_challenge(self, state_token):
+        token_details = self.token_details()
+        if not token_details:
+            return
+        preferred_factor = choose_mfa(token_details, self.preferred_mfa)
+        return self._verify_factor(
+            state_token,
+            preferred_factor['id'],
+            preferred_factor['factorType'],
+        )
+
+    def _verify_factor(self, state_token, factor_id, factor_type):
+        if factor_type == 'totp':
+            try:
+                res = self.doauth(factor_id, state_token)
+            except Exception as s:
+                raise Exception('Unexpected error with the Okta API: %s' % s)
+
+            if 'status' in res and res['status'] == 'SUCCESS':
+                print('\033[92mTOTP authentication successful\033[0m')
+                return self.saml()
+
+            if 'errorCauses' in res:
+                msg = res['errorSummary']
+                print(
+                    '\033[91mMFA token authentication failed: %s\033[0m' % (msg,))
+                print('Hint: Retrying the same token may work.')
+                return self._verify_factor(state_token, factor_id, factor_type)
+        elif factor_type == 'push':
+            try:
+                path = '/authn/factors/{fid}/verify'.format(fid=factor_id)
+                data = {'stateToken': state_token}
+                res = self.okta_req(path, data)
+            except Exception as s:
+                raise Exception('Unexpected error with the Okta API: %s' % s)
+
+            if 'errorCauses' in res:
+                print('Push verification not ready yet; giving up.')
+                return exit(1)
+
+            while res['status'] == 'MFA_CHALLENGE' and res['factorResult'] == 'WAITING':
+                sleep(1)
+                print('Waiting for push notification to be verified ...')
+                url = res['_links']['next']['href']
+                res = requests.post(
+                    url=url,
+                    headers={
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                    },
+                    json=data,
+                ).json()
+
+            if res['status'] == 'MFA_CHALLENGE' and res['factorResult'] == 'REJECTED':
+                print('Push verification rejected.')
+                return
+
+            if 'status' in res and res['status'] == 'SUCCESS':
+                print('User %s is now authenticated with MFA via Okta API' %
+                      self.username)
+                return
+        raise ValueError('Token type %s is not supported.' % factor_type)
+
+    def assertion(self, saml):
+        assertion = ''
+        soup = BeautifulSoup(saml, 'html.parser')
+        for inputtag in soup.find_all('input'):
+            if inputtag.get('name') == 'SAMLResponse':
+                assertion = inputtag.get('value')
+
+        if not assertion:
+            print('No SAML assertion found')
+
+        return base64.b64decode(assertion)
+
+    def auth(self):
+        token = None
+        while not token:
+            token = super(OktaSamlAuth, self).auth()
+        print('\033[92mAuthentication successful\033[0m')
+        return self.assertion(self.saml())
+
+
+def invoke_shell(extra_vars={}):
+    for key, value in extra_vars.items():
+        print('export %s="%s"' % (key, value))
+
+
+def _creds_to_env_vars(response):
+    expiry = response['Credentials']['Expiration']
+    expiry_epoch = expiry - datetime(1970, 1, 1, tzinfo=expiry.tzinfo)
+    assumed_role_arn = response['AssumedRoleUser']['Arn']
+    _prefix, assumed_role, username = assumed_role_arn.split('/')
+    return {
+        'AWS_ACCESS_KEY_ID': response['Credentials']['AccessKeyId'],
+        'AWS_ACCESS_KEY': response['Credentials']['AccessKeyId'],
+        'AWS_SECRET_ACCESS_KEY': response['Credentials']['SecretAccessKey'],
+        'AWS_SECRET_KEY': response['Credentials']['SecretAccessKey'],
+        'AWS_SESSION_TOKEN': response['Credentials']['SessionToken'],
+        'AWS_SECURITY_TOKEN': response['Credentials']['SessionToken'],
+
+        'IDP_TOKEN_EXPIRY': int(expiry_epoch.total_seconds()),
+        'IDP_TOKEN_ROLE': assumed_role,
+        'IDP_TOKEN_USERNAME': username,
+    }
+
+
+def assume_role(role, saml_assertion, duration=3600):
+    try:
+        response = boto3.client('sts').assume_role_with_saml(
+            RoleArn=role['role'],
+            PrincipalArn=role['principal'],
+            SAMLAssertion=base64.b64encode(saml_assertion).decode('utf-8'),
+            DurationSeconds=duration,
+        )
+    except botocore.exceptions.ClientError as err:
+        if duration <= 3600:
+            raise
+        if str(err).endswith('The requested DurationSeconds exceeds the MaxSessionDuration set for this role.'):
+            print('\033[91mRequested duration of %ss exceeds MaxSessionDuration; retrying with 3600s\033[0m' % (
+                duration,))
+            return assume_role(role, saml_assertion, 3600)
+    else:
+        return duration, _creds_to_env_vars(response)
+
+
+def choose_mfa(factors, arg_choice=None):
+    if len(factors) == 1:
+        return factors[0]
+    if arg_choice:
+        for factor_id, factor in enumerate(factors):
+            if arg_choice == factor['factorType']:
+                return factor
+    print('Available MFA tokens:')
+    for factor_id, factor in enumerate(factors):
+        print('%s) %s' % (factor_id + 1, factor['factorType']))
+    factor_id = 0
+    while factor_id <= 0 or factor_id > len(factors):
+        try:
+            factor_id = int(input('Choose a MFA factor: '))
+        except ValueError:
+            pass
+    return factors[factor_id - 1]
+
+
+def choose_app(app_config, arg_choice=None):
+    if arg_choice:
+        for app_name in app_config:
+            if app == arg_choice:
+                return app_name, app_config[app]
+
+    print('Available apps:')
+    for app_id, app_name in enumerate(app_config):
+        print('%s) %s' % (app_id + 1, app_name))
+        app_config[app_name]['app_id'] = app_id  # associate app_id with the app_name so we can derive it later on
+    app_id = 0
+    while app_id <= 0 or app_id > len(app_config):
+        try:
+            app_id = int(input('Choose an app: '))
+        except ValueError:
+            pass
+    app_name = [x for x in app_config if app_config[x]['app_id'] == app_id - 1][0]  # derive app_name from the digit entered
+    return app_name, app_config[app_name]
+
+
+def choose_role(saml_assertion, role_choice=None):
+    roles = list(extract_saml_assertion_roles(saml_assertion))
+    if role_choice:
+        for role_id, role in enumerate(roles):
+            if role_choice == role['role'].split('/')[-1]:
+                return role
+    print('Available roles:')
+    for role_id, role in enumerate(roles):
+        print('%s) %s' % (role_id + 1, role['role']))
+    role_id = 0
+    while role_id <= 0 or role_id > len(roles):
+        try:
+            role_id = int(input('Choose a role: '))
+        except ValueError:
+            pass
+    return roles[role_id - 1]
+
+
+def extract_saml_assertion_principal(saml_assertion):
+    root = ElementTree.fromstring(saml_assertion)
+    for child in root.findall('.//*[@Name="https://aws.amazon.com/SAML/Attributes/Role"]')[0]:
+        role_details = child.text.replace('\n', '')
+    return role_details.split(',')[0]
+
+
+def extract_saml_assertion_roles(saml_assertion):
+    root = ElementTree.fromstring(saml_assertion)
+    for child in root.findall('.//*[@Name="https://aws.amazon.com/SAML/Attributes/Role"]')[0]:
+        role_details = child.text.replace('\n', '')
+        principal_arn, role_arn = role_details.split(',')
+        yield {
+            'principal': principal_arn,
+            'role': role_arn,
+        }
+
+
+def write_credentials_file(credentials_file, profile, extra_vars={}):
+    config = ConfigParser()
+    config.read(credentials_file)
+
+    config[profile] = {}
+
+    for key, value in extra_vars.items():
+        config[profile][key] = str(value)
+
+    with open(credentials_file, 'w') as configfile:
+        config.write(configfile)
+
+
+def get_app_config():
+    with open(os.path.expanduser('~/.aws/oktashell.yml')) as handle:
+        config_file = handle.read()
+    config = yaml.safe_load(config_file)
+    return config
+
+
+if __name__ == '__main__':
+    try:
+        sys.stdout, sys.stderr = sys.stderr, sys.stdout
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument('-r', '--reauth', action='store_true',
+                            help='Refresh the creds for the current user.',)
+        parser.add_argument(
+            '-u', '--user', help='User to log in as; will prompt if not supplied',)
+        parser.add_argument(
+            '-a', '--app', help='App name to log into; will prompt if not supplied',)
+        parser.add_argument('-d', '--duration', type=int, default=3600,
+                            help='Token expiry time in seconds; default 3600 (1 hour)',)
+        parser.add_argument(
+            '-m', '--mfa', help='MFA token type to prefer; eg. totp or push')
+        parser.add_argument(
+            '-o', '--role', help='Role ARN to assume automatically'
+        )
+        parser.add_argument(
+            '-p', '--profile', help='Profile to write credentials to in ~/.aws/credentials'
+        )
+        args = parser.parse_args(sys.argv[1:])
+
+        if args.reauth:
+            try:
+                args.app = os.environ['IDP_TOKEN_APP']
+                args.user = os.environ['IDP_TOKEN_USERNAME']
+            except KeyError:
+                args.reauth = False
+                print(
+                    '\033[91mCannot reauth without an existing session; trying normal auth.\033[0m')
+
+        try:
+            app_config = get_app_config()
+        except Exception as err:
+            print('\033[91mFailed to load ~/.aws/oktashell.yml: %s\033[0m' % (err))
+            exit(1)
+
+        try:
+            app_name, app_details = choose_app(app_config=app_config, arg_choice=args.app)
+        except KeyError as err:
+            print('\033[91mFailed to parse values from ~/.aws/oktashell.yml: %s\033[0m' % (err))
+            exit(1)
+
+        username = args.user
+        while not username:
+            username = input('Username: ')
+
+        auth = OktaSamlAuth(username=username,
+                            preferred_mfa=args.mfa, **app_details)
+        try:
+            saml_assertion = auth.auth()
+        except Exception as err:
+            print('\033[91m%s\033[0m' % (err,))
+            sys.exit(1)
+        else:
+            if args.role:
+                principal = extract_saml_assertion_principal(
+                    saml_assertion)
+
+                role = {
+                    'principal': principal,
+                    'role': args.role
+                }
+
+            else:
+                role = choose_role(
+                    saml_assertion,
+                    os.environ.get('IDP_TOKEN_ROLE') if args.reauth else None,
+                )
+            duration, env = assume_role(role, saml_assertion, args.duration)
+            env['IDP_TOKEN_APP'] = app_name
+            sys.stdout, sys.stderr = sys.stderr, sys.stdout
+
+            if args.profile:
+                credentials_file_path = os.environ['HOME'] + \
+                    '/.aws/credentials'
+
+                write_credentials_file(
+                    credentials_file_path, args.profile, extra_vars=env)
+
+                print('Credentials have been written to %s profile [%s]' % (
+                    credentials_file_path, args.profile))
+            else:
+                invoke_shell(extra_vars=env)
+
+    except KeyboardInterrupt:
+        pass
+    except Exception as err:
+        import traceback
+        traceback.print_exc()
+    finally:
+        sys.stdout.flush()
+        sys.stderr.flush()

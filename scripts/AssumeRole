@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+
+import sys
+import os
+from configparser import ConfigParser
+from datetime import datetime
+
+import boto3
+import botocore.exceptions
+
+def load_aws_file(file_path):
+    config = ConfigParser()
+    config.read(file_path)
+    return config
+
+def build_env_vars(response, config, profile):
+    expiration = response['Credentials']['Expiration']
+    expiration = expiration - datetime(1970, 1, 1, tzinfo=expiration.tzinfo)
+    expiration = int(expiration.total_seconds())
+
+    env_vars = {
+        'AWS_ACCESS_KEY': response['Credentials']['AccessKeyId'],
+        'AWS_ACCESS_KEY_ID': response['Credentials']['AccessKeyId'],
+        'AWS_SECRET_ACCESS_KEY': response['Credentials']['SecretAccessKey'],
+        'AWS_SECRET_KEY': response['Credentials']['SecretAccessKey'],
+        'AWS_SESSION_TOKEN': response['Credentials']['SessionToken'],
+        'AWS_SECURITY_TOKEN': response['Credentials']['SessionToken'],
+        'AWS_ASSUMED_ROLE': response['AssumedRoleUser']['Arn'],
+        'AWS_PROFILE_NAME': profile,
+        'AWS_ROLE': config['profile ' + profile]['role_arn'],
+        'AWS_EXTERNAL_ID': config.get('profile ' + profile).get('external_id'),
+        'AWS_EXPIRATION': expiration
+    }
+
+    return {k: v for k, v in env_vars.items() if v}  # don't return empty env vars
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('profile', help='Profile to assume')
+    parser.add_argument('-e', '--export', action='store_true', help='Prepend outputted variables with export')
+    parser.add_argument('-s', '--source', help='Source profile to use to assume role', default = 'idp')
+    args = parser.parse_args(sys.argv[1:])
+
+    credentials_file_path = os.environ['HOME'] + '/.aws/credentials'
+    config_file_path = os.environ['HOME'] + '/.aws/config'
+
+    config = load_aws_file(config_file_path)
+    credentials = load_aws_file(credentials_file_path)
+
+    client = boto3.client(
+        'sts',
+        aws_access_key_id=credentials[args.source]['aws_access_key_id'],
+        aws_secret_access_key=credentials[args.source]['aws_secret_access_key'],
+        aws_session_token=credentials[args.source]['aws_session_token'],
+    )
+
+    try:
+        response = client.assume_role(
+            RoleArn=config['profile ' + args.profile]['role_arn'],
+            RoleSessionName=credentials[args.source]['idp_token_username'],
+            ExternalId=
+        )
+    except botocore.exceptions.ClientError as err:
+        if str(err).endswith('The security token included in the request is expired'):
+            print('\033[91mThe token found in profile {} has expired. You will need to login to Okta again.\033[0m'.format(args.source))
+            sys.exit(1)
+        else:
+            raise
+
+    if args.export:
+        output = build_env_vars(response, config, args.profile)
+        for key, value in output.items():
+            print('export {}="{}"'.format(key, value), end=' ')
+    else:
+        output = build_env_vars(response, config, args.profile)
+        #print a new line in case the env file doesnt have one
+        print('')
+        for key, value in output.items():
+            print('{}="{}"'.format(key, value))
+
+
+
