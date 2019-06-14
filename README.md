@@ -69,7 +69,7 @@ Shell functions allow you mix hardcoded and dynamic parameters. If you would lik
 ### Hardcoded Parameters
 ```
 function oktashell() {
-  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktahshell cmdlabs/okta-utils:latest -u <username> -a <application> -m <mfa_method> -o <role_arn> -p <profile>
+  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest -u <username> -a <application> -m <mfa_method> -o <role_arn> -p <profile>
 }
 
 function AssumeRole() {
