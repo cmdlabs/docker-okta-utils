@@ -338,8 +338,8 @@ def choose_mfa(factors, arg_choice=None):
 def choose_app(app_config, arg_choice=None):
     if arg_choice:
         for app_name in app_config:
-            if app == arg_choice:
-                return app_name, app_config[app]
+            if app_name == arg_choice:
+                return app_name, app_config[app_name]
 
     print('Available apps:')
     for app_id, app_name in enumerate(app_config):
