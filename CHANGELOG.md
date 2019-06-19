@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 Bug in hardcoded parameters usage
 
+### Added
+Add .dockerignore
+
 ## [1.0.0] - 2019-06-14
 ### Added
 Initial Release
