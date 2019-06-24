@@ -28,9 +28,12 @@ def build_env_vars(response, config, profile):
         'AWS_ASSUMED_ROLE': response['AssumedRoleUser']['Arn'],
         'AWS_PROFILE_NAME': profile,
         'AWS_ROLE': config['profile ' + profile]['role_arn'],
-        'AWS_EXTERNAL_ID': config.get('profile ' + profile).get('external_id'),
+        #'AWS_EXTERNAL_ID': config.get('profile ' + profile)['external_id'],
         'AWS_EXPIRATION': expiration
     }
+
+    if 'external_id' in config['profile ' + profile]:
+        env_vars['AWS_EXTERNAL_ID'] = config['profile ' + profile]['external_id']
 
     return {k: v for k, v in env_vars.items() if v}  # don't return empty env vars
 
@@ -57,11 +60,17 @@ if __name__ == '__main__':
     )
 
     try:
-        response = client.assume_role(
-            RoleArn=config['profile ' + args.profile]['role_arn'],
-            RoleSessionName=credentials[args.source]['idp_token_username'],
-            ExternalId=
-        )
+        if 'external_id' in config['profile ' + args.profile]:
+            response = client.assume_role(
+                RoleArn=config['profile ' + args.profile]['role_arn'],
+                RoleSessionName=credentials[args.source]['idp_token_username'],
+                ExternalId=config['profile ' + args.profile]['external_id']
+            )
+        else:
+            response = client.assume_role(
+                RoleArn=config['profile ' + args.profile]['role_arn'],
+                RoleSessionName=credentials[args.source]['idp_token_username']
+            )
     except botocore.exceptions.ClientError as err:
         if str(err).endswith('The security token included in the request is expired'):
             print('\033[91mThe token found in profile {} has expired. You will need to login to Okta again.\033[0m'.format(args.source))
@@ -79,6 +88,3 @@ if __name__ == '__main__':
         print('')
         for key, value in output.items():
             print('{}="{}"'.format(key, value))
-
-
-
