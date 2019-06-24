@@ -28,7 +28,6 @@ def build_env_vars(response, config, profile):
         'AWS_ASSUMED_ROLE': response['AssumedRoleUser']['Arn'],
         'AWS_PROFILE_NAME': profile,
         'AWS_ROLE': config['profile ' + profile]['role_arn'],
-        #'AWS_EXTERNAL_ID': config.get('profile ' + profile)['external_id'],
         'AWS_EXPIRATION': expiration
     }
 
