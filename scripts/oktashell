@@ -32,7 +32,7 @@ class OktaAPIAuth(object):
 
     @property
     def totp_code(self):
-        return raw_input('TOTP token: ')
+        return input('TOTP token: ')
 
     def okta_req(self, path, data, method='post'):
         url = '{base}/api/v1{path}'.format(base=self.okta_url, path=path)
@@ -273,7 +273,7 @@ def choose_mfa(factors, arg_choice=None):
     factor_id = 0
     while factor_id <= 0 or factor_id > len(factors):
         try:
-            factor_id = int(raw_input('Choose a MFA factor: '))
+            factor_id = int(input('Choose a MFA factor: '))
         except ValueError:
             pass
     return factors[factor_id - 1]
@@ -311,7 +311,7 @@ def choose_role(saml_assertion, role_choice=None):
     role_id = 0
     while role_id <= 0 or role_id > len(roles):
         try:
-            role_id = int(raw_input('Choose a role: '))
+            role_id = int(input('Choose a role: '))
         except ValueError:
             pass
     return roles[role_id - 1]
