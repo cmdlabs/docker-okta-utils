@@ -155,7 +155,7 @@ class OktaAPIAuth(object):
 
 class OktaSamlAuth(OktaAPIAuth):
 
-    def __init__(self, okta_url, application_type, application_id, username, preferred_mfa):
+    def __init__(self, okta_url, application_type, application_id, username, preferred_mfa, **kwargs):
         self.application_type = application_type
         self.application_id = application_id
         self.preferred_mfa = preferred_mfa
