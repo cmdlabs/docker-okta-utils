@@ -1,6 +1,6 @@
 IMAGE_NAME ?= cmdlabs/okta-utils
 
-RELEASE_VERSION = 2.0.0
+RELEASE_VERSION = 2.0.1
 BUILD_VERSION ?= testing
 
 ifdef CI_COMMIT_REF_NAME
