@@ -23,23 +23,16 @@ class OktaAPIAuth(object):
         self.okta_url = None
         self.username = username
         self.userid = None
-        url_new = ('https', okta_server, '', '', '', '')
+        url_new = ('https', okta_server, '', '', '','')
         self.okta_url = urllib.parse.urlunparse(url_new)
-        self._last_passcode = None
 
     @property
     def password(self):
         return getpass.getpass('Password: ')
 
     @property
-    def passcode(self):
-        if self._last_passcode:
-            result = input('TOTP token [%s]: ' % self._last_passcode)
-            if result:
-                self._last_passcode = result
-        else:
-            self._last_passcode = input('TOTP token: ')
-        return self._last_passcode
+    def totp_code(self):
+        return input('TOTP token: ')
 
     def okta_req(self, path, data, method='post'):
         url = '{base}/api/v1{path}'.format(base=self.okta_url, path=path)
@@ -53,148 +46,57 @@ class OktaAPIAuth(object):
         )
         return resp.json()
 
-    def preauth(self, username, password):
+    def validate_password(self, username, password):
         path = '/authn'
         data = {'username': username, 'password': password}
         return self.okta_req(path, data)
 
-    def doauth(self, fid, state_token):
+    def validate_totp(self, fid, state_token):
         path = '/authn/factors/{fid}/verify'.format(fid=fid)
         data = {'fid': fid,
                 'stateToken': state_token,
-                'passCode': self.passcode}
+                'passCode': self.totp_code}
         return self.okta_req(path, data)
 
-    def login(self, sessionToken):
-        requests.get(url=self.okta_url + "/login/sessionCookieRedirect?token=" +
-                     sessionToken + "&redirectUrl=/")
+    def update_cookie(self, sessionToken):
+        requests.get(url=self.okta_url + "/login/sessionCookieRedirect?token=" + sessionToken + "&redirectUrl=/")
 
     def auth(self):
         username = self.username
         password = self.password
-        status = False
-        invalid_username_or_password = username is None or username == '' or password is None or password == ''
-        if invalid_username_or_password:
-            print("Missing username or password for user: {} - Reported username may be 'None' due to this".format(username))
+        if not username or not password:
+            print('\033[91mMissing username or password.\033[0m')
             return False
         else:
             try:
-                rv = self.preauth(username, password)
+                pw_auth_resp = self.validate_password(username, password)
             except Exception as s:
                 raise RuntimeError('Error connecting to the Okta API: %s' % s)
 
-            if 'errorCauses' in rv:
-                msg = rv['errorSummary']
-                print('\033[91mUser authentication failed: %s\033[0m' % (msg,))
+            if 'errorCauses' in pw_auth_resp:
+                print('\033[91mUser authentication failed: %s\033[0m' % (pw_auth_resp['errorSummary'],))
                 return False
-            if 'status' in rv:
-                status = rv['status']
-            if status == 'SUCCESS':
-                self.userid = rv['_embedded']['user']['id']
-                self.login(rv['sessionToken'])
+            if pw_auth_resp['status'] in {'MFA_ENROLL', 'MFA_ENROLL_ACTIVATE'}:
+                print('\033[91mYou need to add an MFA token via okta.com first.\033[0m')
+                return False
+
+            print('\033[92mAuthentication successful\033[0m')
+            self.userid = pw_auth_resp['_embedded']['user']['id']
+            if pw_auth_resp['status'] == 'SUCCESS':
+                self.update_cookie(pw_auth_resp['sessionToken'])
                 return True
-            if not self.passcode:
-                print('No second factor found for username %s' % username)
-            if status == 'MFA_ENROLL' or status == 'MFA_ENROLL_ACTIVATE':
-                print('User %s needs to enroll first' % self.username)
-                return False
-            if status == 'MFA_REQUIRED' or status == 'MFA_CHALLENGE':
-                print('User %s password validates, checking second factor' %
-                      self.username)
-                res = None
-                for factor in rv['_embedded']['factors']:
-                    if factor['factorType'] != 'token:software:totp':
-                        continue
-                    fid = factor['id']
-                    state_token = rv['stateToken']
-                    try:
-                        res = self.doauth(fid, state_token)
-                    except Exception as s:
-                        print('Unexpected error with the Okta API: %s' % s)
-                        return False
-
-                    if 'status' in res and res['status'] == 'SUCCESS':
-                        print(
-                            'User %s is now authenticated with MFA via Okta API' % self.username)
-                        self.userid = rv['_embedded']['user']['id']
-                        self.login(res['sessionToken'])
-                        return True
-
-                if 'errorCauses' in res:
-                    msg = res['errorCauses'][0]['errorSummary']
-                    # TODO: Sleep and retry on certain failures
-                    # Invalid token provided: Retry
-                    # Invalid Passcode/Answer: Actually invalid
-                    print('User %s MFA token authentication failed: %s' %
-                          (self.username, msg))
-                return False
-            print('User %s is not allowed to authenticate: %s' %
-                  (self.username, status))
+            if pw_auth_resp['status'] in {'MFA_REQUIRED', 'MFA_CHALLENGE'}:
+                session_token = self._mfa_challenge(pw_auth_resp['stateToken'], pw_auth_resp['_embedded']['factors'])
+                if session_token:
+                    self.update_cookie(session_token)
+                return bool(session_token)
+            print('User %s is not allowed to authenticate' % (self.username,))
             return False
 
-
-class OktaSamlAuth(OktaAPIAuth):
-
-    def __init__(self, okta_url, application_type, application_id, username, preferred_mfa, **kwargs):
-        self.application_type = application_type
-        self.application_id = application_id
-        self.preferred_mfa = preferred_mfa
-        OktaAPIAuth.__init__(self, okta_url, username)
-
-    def token_details(self):
-        path = "/api/v1/users/" + self.userid + "/factors"
-        url = '{base}{path}'.format(base=self.okta_url, path=path)
-        resp = requests.get(url=url, headers={
-                            'Accept': 'application/json', 'Content-Type': 'application/json'})
-        return [
-            {
-                key: value.replace('token:software:',
-                                   '') if key == 'factorType' else value
-                for key, value in factor.items()
-            }
-            for factor in resp.json()
-        ]
-
-    def saml(self):
-        url = '{base}/app/{app}/{appid}/sso/saml'.format(
-            base=self.okta_url, app=self.application_type, appid=self.application_id)
-        resp = requests.get(url=url)
-
-        if '/policy/second-factor' in resp.url:
-            state_token = None
-            for line in resp.text.split('\n'):
-                if 'var stateToken ' in line:
-                    state_token = line.split("'")[1]
-                    if not state_token:
-                        continue
-            if not state_token:
-                raise Exception(
-                    "Parsing state token from SAML document failed.")
-            if self._valid_state_token(state_token):
-                self._mfa_challenge(state_token)
-            else:
-                # TODO: This shouldn't be possible considering Okta *just* issued it.
-                print('Okta provided an invalid token; fetching a new one.')
-            return self.saml()
-
-        if resp.status_code == 403:
-            raise Exception(
-                "You don't have permission to access this Okta app, please check with your administrator.")
-        if resp.status_code != 200:
-            raise Exception(
-                'Received error code from server when loading SAML details: %s' % resp.status_code)
-
-        return resp.text
-
-    def _valid_state_token(self, state_token):
-        resp = self.okta_req('/authn', {'stateToken': state_token})
-        return 'errorCode' not in resp
-
-    def _mfa_challenge(self, state_token):
-        token_details = self.token_details()
-        if not token_details:
+    def _mfa_challenge(self, state_token, available_factors):
+        if not available_factors:
             return
-        preferred_factor = choose_mfa(token_details, self.preferred_mfa)
+        preferred_factor = choose_mfa(available_factors, self.preferred_mfa)
         return self._verify_factor(
             state_token,
             preferred_factor['id'],
@@ -202,21 +104,19 @@ class OktaSamlAuth(OktaAPIAuth):
         )
 
     def _verify_factor(self, state_token, factor_id, factor_type):
-        if factor_type == 'totp':
+        if factor_type == 'token:software:totp':
             try:
-                res = self.doauth(factor_id, state_token)
+                res = self.validate_totp(factor_id, state_token)
             except Exception as s:
                 raise Exception('Unexpected error with the Okta API: %s' % s)
 
             if 'status' in res and res['status'] == 'SUCCESS':
                 print('\033[92mTOTP authentication successful\033[0m')
-                return self.saml()
+                return res['sessionToken']
 
             if 'errorCauses' in res:
                 msg = res['errorSummary']
-                print(
-                    '\033[91mMFA token authentication failed: %s\033[0m' % (msg,))
-                print('Hint: Retrying the same token may work.')
+                print('\033[91mMFA token authentication failed: %s\033[0m' % (msg,))
                 return self._verify_factor(state_token, factor_id, factor_type)
         elif factor_type == 'push':
             try:
@@ -248,10 +148,56 @@ class OktaSamlAuth(OktaAPIAuth):
                 return
 
             if 'status' in res and res['status'] == 'SUCCESS':
-                print('User %s is now authenticated with MFA via Okta API' %
-                      self.username)
-                return
+                print('User %s is now authenticated with MFA via Okta API' % self.username)
+                return res['sessionToken']
         raise ValueError('Token type %s is not supported.' % factor_type)
+
+
+class OktaSamlAuth(OktaAPIAuth):
+
+    def __init__(self, okta_url, application_type, application_id, username, preferred_mfa, **kwargs):
+        self.application_type = application_type
+        self.application_id = application_id
+        self.preferred_mfa = preferred_mfa
+        OktaAPIAuth.__init__(self, okta_url, username)
+
+    def token_details(self):
+        path = "/api/v1/users/" + self.userid + "/factors"
+        url = '{base}{path}'.format(base=self.okta_url, path=path)
+        resp = requests.get(url=url, headers={'Accept': 'application/json', 'Content-Type': 'application/json'})
+        return resp.json()
+
+    def saml(self):
+        url = '{base}/app/{app}/{appid}/sso/saml'.format(base=self.okta_url, app=self.application_type, appid=self.application_id)
+        resp = requests.get(url=url)
+
+        if '/policy/second-factor' in resp.url:
+            state_token = None
+            for line in resp.text.split('\n'):
+                if 'var stateToken ' in line:
+                    state_token = line.split("'")[1]
+                    if not state_token:
+                        continue
+            if not state_token:
+                raise Exception("Parsing state token from SAML document failed.")
+            if self._valid_state_token(state_token):
+                while not self._mfa_challenge(state_token, self.token_details()):
+                    pass
+            else:
+                # TODO: This shouldn't be possible considering Okta *just* issued it.
+                print('Okta provided an invalid token; fetching a new one.')
+            return self.saml()
+
+        if resp.status_code == 403:
+            raise Exception("You don't have permission to access this Okta app, please check with your administrator.")
+        if resp.status_code != 200:
+            raise Exception('Received error code from server when loading SAML details: %s' % resp.status_code)
+
+        return resp.text
+
+    def _valid_state_token(self, state_token):
+        resp = self.okta_req('/authn', {'stateToken': state_token})
+        return 'errorCode' not in resp
 
     def assertion(self, saml):
         assertion = ''
@@ -269,7 +215,6 @@ class OktaSamlAuth(OktaAPIAuth):
         token = None
         while not token:
             token = super(OktaSamlAuth, self).auth()
-        print('\033[92mAuthentication successful\033[0m')
         return self.assertion(self.saml())
 
 
@@ -309,8 +254,7 @@ def assume_role(role, saml_assertion, duration=3600):
         if duration <= 3600:
             raise
         if str(err).endswith('The requested DurationSeconds exceeds the MaxSessionDuration set for this role.'):
-            print('\033[91mRequested duration of %ss exceeds MaxSessionDuration; retrying with 3600s\033[0m' % (
-                duration,))
+            print('\033[91mRequested duration of %ss exceeds MaxSessionDuration; retrying with 3600s\033[0m' % (duration,))
             return assume_role(role, saml_assertion, 3600)
     else:
         return duration, _creds_to_env_vars(response)
@@ -325,7 +269,7 @@ def choose_mfa(factors, arg_choice=None):
                 return factor
     print('Available MFA tokens:')
     for factor_id, factor in enumerate(factors):
-        print('%s) %s' % (factor_id + 1, factor['factorType']))
+        print('%s) %s' % (factor_id + 1, factor['factorType'].replace('token:software:', '')))
     factor_id = 0
     while factor_id <= 0 or factor_id > len(factors):
         try:
@@ -338,8 +282,8 @@ def choose_mfa(factors, arg_choice=None):
 def choose_app(app_config, arg_choice=None):
     if arg_choice:
         for app_name in app_config:
-            if app == arg_choice:
-                return app_name, app_config[app]
+            if app_name == arg_choice:
+                return app_name, app_config[app_name]
 
     print('Available apps:')
     for app_id, app_name in enumerate(app_config):
@@ -378,7 +322,6 @@ def extract_saml_assertion_principal(saml_assertion):
     for child in root.findall('.//*[@Name="https://aws.amazon.com/SAML/Attributes/Role"]')[0]:
         role_details = child.text.replace('\n', '')
     return role_details.split(',')[0]
-
 
 def extract_saml_assertion_roles(saml_assertion):
     root = ElementTree.fromstring(saml_assertion)

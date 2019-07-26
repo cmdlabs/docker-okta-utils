@@ -1,5 +1,5 @@
 # docker-okta-utils
-![Docker Cloud Automated build](https://img.shields.io/docker/cloud/automated/cmdlabs/okta-utils.svg) ![Docker Cloud Build Status](https://img.shields.io/docker/cloud/build/cmdlabs/okta-utils.svg)
+[![Docker Cloud Automated build](https://img.shields.io/docker/cloud/automated/cmdlabs/okta-utils.svg)](https://hub.docker.com/r/cmdlabs/okta-utils) [![Docker Cloud Build Status](https://img.shields.io/docker/cloud/build/cmdlabs/okta-utils.svg)](https://hub.docker.com/r/cmdlabs/okta-utils/builds)
 
 docker-okta-utils implements a container that handles authentication from Okta to AWS. Because it (non-destructively) updates your `~/.aws/credentials file`, it is flexible enough to allow use of other tools with their own Docker images like Terraform and kubectl. It also allows easy use of the [3 Musketeers][] pattern.
 
@@ -14,11 +14,11 @@ oktashell requires a configuration file at `~/.aws/oktashell.yml` containing inf
 
 ```yml
 ---
-myorg:
+myapp:
   application_id: asdfasdfasdfasdfasdf
   application_type: amazon_aws
   okta_url: myorg.okta.com
-myorg_test:
+myapp_test:
   application_id: fdsafdsafdsafdsafdsa
   application_type: amazon_aws
   okta_url: myorg.oktapreview.com
@@ -40,8 +40,8 @@ optional arguments:
   -p PROFILE, --profile PROFILE     Profile to write credentials to in ~/.aws/credentials
 ```
 
-## AssumeRole
-AssumeRole uses the standard `~/.aws/config` file. You don't need to specify a source_profile on each profile as whats specified with `-s` is always used.
+## assumerole
+assumerole uses the standard `~/.aws/config` file. You don't need to specify a source_profile on each profile as whats specified with `-s` is always used.
 
 ```
 [profile xyz-sandpit]
@@ -50,7 +50,7 @@ external_id = abcdefghjklmnop
 ```
 
 ```
-usage: AssumeRole [-h] [-e] [-s SOURCE] profile
+usage: assumerole [-h] [-e] [-s SOURCE] profile
 
 positional arguments:
   profile                     Profile to assume
@@ -62,18 +62,18 @@ optional arguments:
 ```
 
 ## How to use
-This image is available at DockerHub(https://hub.docker.com/r/cmdlabs/okta-utils).
+This image is available at dockerhub: https://hub.docker.com/r/cmdlabs/okta-utils
 
 Shell functions allow you mix hardcoded and dynamic parameters. If you would like to take additional parameters specified on the command line add `$@` to the end of a function command.
 
 ### Hardcoded Parameters
 ```
 function oktashell() {
-  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest -u <username> -a <application> -m <mfa_method> -o <role_arn> -p <profile>
+  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest -u <username> -a <application> -m <mfa_method> -o <role_arn> -p <profile> -d 28800
 }
 
-function AssumeRole() {
-  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=AssumeRole cmdlabs/okta-utils:latest <profile_to_assume> -e
+function assumerole() {
+  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=assumerole cmdlabs/okta-utils:latest <profile_to_assume> -e
 }
 ```
 
@@ -83,20 +83,20 @@ function oktashell() {
   docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest $@
 }
 
-function AssumeRole() {
-  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=AssumeRole cmdlabs/okta-utils:latest $@
+function assumerole() {
+  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=assumerole cmdlabs/okta-utils:latest $@
 }
 ```
 
-### Autoexport AssumeRole
-If you would like to automatically export the credentials obtained from AssumeRole to the current shell you can use the following.
+### Autoexport assumerole
+If you would like to automatically export the credentials obtained from assumerole to the current shell you can use the following.
 ```
 function oktashell() {
   docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest -u <username> -a <application> -m <mfa_method> -o <role_arn> -p <profile>
 }
 
-function AssumeRole() {
-  eval $(docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=AssumeRole cmdlabs/okta-utils:latest -e $@)
+function assumerole() {
+  eval $(docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=assumerole cmdlabs/okta-utils:latest -e $@)
 }
 ```
 

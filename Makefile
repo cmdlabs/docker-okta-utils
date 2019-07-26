@@ -1,6 +1,6 @@
 IMAGE_NAME ?= cmdlabs/okta-utils
 
-RELEASE_VERSION = 1.0.0
+RELEASE_VERSION = 2.0.1
 BUILD_VERSION ?= testing
 
 ifdef CI_COMMIT_REF_NAME
@@ -13,8 +13,8 @@ dockerBuild:
 
 dockerTest:
 	docker run --rm --entrypoint=oktashell $(IMAGE_NAME):$(BUILD_VERSION) --help
-	docker run --rm --entrypoint=AssumeRole $(IMAGE_NAME):$(BUILD_VERSION) --help
-	@echo "All tests completed successfully" 
+	docker run --rm --entrypoint=assumerole $(IMAGE_NAME):$(BUILD_VERSION) --help
+	@echo "All tests completed successfully"
 .PHONY: dockerTest
 
 dockerPush:
