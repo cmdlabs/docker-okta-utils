@@ -12,7 +12,7 @@ It is not possible to run `oktashell` with the `eval $(docker run -it)` method o
 ### Configuration
 oktashell requires a configuration file at `~/.aws/oktashell.yml` containing information about your Okta apps:
 
-```yml
+```yaml
 ---
 myapp:
   application_id: asdfasdfasdfasdfasdf
@@ -25,7 +25,8 @@ myapp_test:
 ```
 
 ### Usage
-```
+
+```text
 usage: oktashell [-h] [-r] [-u USER] [-a APP] [-d DURATION] [-m MFA] [-o ROLE]
                  [-p PROFILE]
 
@@ -49,7 +50,7 @@ role_arn = arn:aws:iam::111111111111:role/xyz-role-api-fulladmin
 external_id = abcdefghjklmnop
 ```
 
-```
+```text
 usage: assumerole [-h] [-e] [-s SOURCE] profile
 
 positional arguments:
@@ -67,36 +68,41 @@ This image is available at dockerhub: https://hub.docker.com/r/cmdlabs/okta-util
 Shell functions allow you mix hardcoded and dynamic parameters. If you would like to take additional parameters specified on the command line add `$@` to the end of a function command.
 
 ### Hardcoded Parameters
-```
-function oktashell() {
-  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest -u <username> -a <application> -m <mfa_method> -o <role_arn> -p <profile> -d 28800
+
+```bash
+oktashell() {
+  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest \
+    -u <username> -a <application> -m <mfa_method> -o <role_arn> -p <profile> -d 28800
 }
 
-function assumerole() {
-  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=assumerole cmdlabs/okta-utils:latest <profile_to_assume> -e
+assumerole() {
+  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=assumerole cmdlabs/okta-utils:latest \
+    <profile_to_assume> -e
 }
 ```
 
 ### Dynamic Parameters
-```
-function oktashell() {
+
+```bash
+oktashell() {
   docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest $@
 }
 
-function assumerole() {
+assumerole() {
   docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=assumerole cmdlabs/okta-utils:latest $@
 }
 ```
 
 ### Autoexport assumerole
 If you would like to automatically export the credentials obtained from assumerole to the current shell you can use the following.
-```
-function oktashell() {
-  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest -u <username> -a <application> -m <mfa_method> -o <role_arn> -p <profile>
+
+```bash
+oktashell() {
+  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest \
+    -u <username> -a <application> -m <mfa_method> -o <role_arn> -p <profile>
 }
 
-function assumerole() {
+assumerole() {
   eval $(docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=assumerole cmdlabs/okta-utils:latest -e $@)
 }
 ```
-
