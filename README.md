@@ -1,7 +1,7 @@
 # docker-okta-utils
 [![Docker Cloud Automated build](https://img.shields.io/docker/cloud/automated/cmdlabs/okta-utils.svg)](https://hub.docker.com/r/cmdlabs/okta-utils) [![Docker Cloud Build Status](https://img.shields.io/docker/cloud/build/cmdlabs/okta-utils.svg)](https://hub.docker.com/r/cmdlabs/okta-utils/builds)
 
-docker-okta-utils implements a container that handles authentication from Okta to AWS. Because it (non-destructively) updates your `~/.aws/credentials file`, it is flexible enough to allow use of other tools with their own Docker images like Terraform and kubectl. It also allows easy use of the [3 Musketeers][] pattern.
+docker-okta-utils implements a container that handles authentication from Okta to AWS. Because it (non-destructively) updates your `~/.aws/credentials` file, it is flexible enough to allow use of other tools with their own Docker images like Terraform and kubectl. It also allows easy use of the [3 Musketeers][] pattern.
 
 [3 Musketeers]: https://3musketeers.io/
 
@@ -12,7 +12,7 @@ It is not possible to run `oktashell` with the `eval $(docker run -it)` method o
 ### Configuration
 oktashell requires a configuration file at `~/.aws/oktashell.yml` containing information about your Okta apps:
 
-```yaml
+```yml
 ---
 myapp:
   application_id: asdfasdfasdfasdfasdf
@@ -25,8 +25,7 @@ myapp_test:
 ```
 
 ### Usage
-
-```text
+```
 usage: oktashell [-h] [-r] [-u USER] [-a APP] [-d DURATION] [-m MFA] [-o ROLE]
                  [-p PROFILE]
 
@@ -41,68 +40,21 @@ optional arguments:
   -p PROFILE, --profile PROFILE     Profile to write credentials to in ~/.aws/credentials
 ```
 
-## assumerole
-assumerole uses the standard `~/.aws/config` file. You don't need to specify a source_profile on each profile as whats specified with `-s` is always used.
-
-```
-[profile xyz-sandpit]
-role_arn = arn:aws:iam::111111111111:role/xyz-role-api-fulladmin
-external_id = abcdefghjklmnop
-```
-
-```text
-usage: assumerole [-h] [-e] [-s SOURCE] profile
-
-positional arguments:
-  profile                     Profile to assume
-
-optional arguments:
-  -h, --help                  show this help message and exit
-  -e, --export                Prepend outputted variables with export
-  -s SOURCE, --source SOURCE  Source profile to use to assume role
-```
-
 ## How to use
 This image is available at dockerhub: https://hub.docker.com/r/cmdlabs/okta-utils
 
 Shell functions allow you mix hardcoded and dynamic parameters. If you would like to take additional parameters specified on the command line add `$@` to the end of a function command.
 
 ### Hardcoded Parameters
-
-```bash
-oktashell() {
-  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest \
-    -u <username> -a <application> -m <mfa_method> -o <role_arn> -p <profile> -d 28800
-}
-
-assumerole() {
-  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=assumerole cmdlabs/okta-utils:latest \
-    <profile_to_assume> -e
+```
+function oktashell() {
+  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest -u <username> -a <application> -m <mfa_method> -o <role_arn> -p <profile> -d 28800
 }
 ```
 
 ### Dynamic Parameters
-
-```bash
-oktashell() {
-  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest $@
-}
-
-assumerole() {
-  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=assumerole cmdlabs/okta-utils:latest $@
-}
 ```
-
-### Autoexport assumerole
-If you would like to automatically export the credentials obtained from assumerole to the current shell you can use the following.
-
-```bash
-oktashell() {
-  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest \
-    -u <username> -a <application> -m <mfa_method> -o <role_arn> -p <profile>
-}
-
-assumerole() {
-  eval $(docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=assumerole cmdlabs/okta-utils:latest -e $@)
+function oktashell() {
+  docker run --rm -it -v ~/.aws:/root/.aws --entrypoint=oktashell cmdlabs/okta-utils:latest $@
 }
 ```
