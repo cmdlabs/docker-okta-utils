@@ -12,7 +12,7 @@ It is not possible to run `oktashell` with the `eval $(docker run -it)` method o
 ### Configuration
 oktashell requires a configuration file at `~/.aws/oktashell.yml` containing information about your Okta apps:
 
-```yml
+```yaml
 ---
 myapp:
   application_id: asdfasdfasdfasdfasdf
