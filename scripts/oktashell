@@ -305,6 +305,7 @@ def choose_role(saml_assertion, role_choice=None):
         for role_id, role in enumerate(roles):
             if role_choice == role['role'].split('/')[-1]:
                 return role
+    roles = sorted(roles, key= lambda x: x['role'].split('/')[-1])
     print('Available roles:')
     for role_id, role in enumerate(roles):
         print('%s) %s' % (role_id + 1, role['role']))
